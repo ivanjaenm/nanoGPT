@@ -23,6 +23,24 @@ compile = False # use PyTorch 2.0 to compile the model to be faster
 exec(open('configurator.py').read()) # overrides from command line or config file
 # -----------------------------------------------------------------------------
 
+# Function to calculate perplexity
+def compute_eval_perplexity(model, encode, text):
+    # Tokenize input text
+    inputs = encode(text)
+    
+    # Ensure the model is in evaluation mode
+    model.eval()
+    
+    # Disable gradient calculations for evaluation
+    with torch.no_grad():
+        # Forward pass: get the model's predictions (logits)
+        outputs = model(inputs, labels=inputs)
+        loss = outputs.loss.item()
+    
+    # Calculate perplexity from loss
+    perplexity = torch.exp(loss)
+    return perplexity
+
 torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)
 torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
@@ -35,7 +53,7 @@ ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=
 if init_from == 'resume':
     # init from a model saved in a specific directory
     ckpt_path = os.path.join(out_dir, 'ckpt.pt')
-    checkpoint = torch.load(ckpt_path, map_location=device)
+    checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
     gptconf = GPTConfig(**checkpoint['model_args'])
     model = GPT(gptconf)
     state_dict = checkpoint['model']
@@ -77,13 +95,17 @@ else:
 if start.startswith('FILE:'):
     with open(start[5:], 'r', encoding='utf-8') as f:
         start = f.read()
+print(f"Prompting with: {start}")
 start_ids = encode(start)
 x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
-
 # run generation
+print("Starting generation")
 with torch.no_grad():
     with ctx:
         for k in range(num_samples):
             y = model.generate(x, max_new_tokens, temperature=temperature, top_k=top_k)
-            print(decode(y[0].tolist()))
+            sample = decode(y[0].tolist())
+            perplexity = compute_eval_perplexity(model, encode, sample)
+            print(sample)
+            print("Perplexity: ", perplexity.item())
             print('---------------')

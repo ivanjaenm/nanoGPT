@@ -76,9 +76,11 @@ from model import GPTConfig, GPT
 # dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
 # compile = True # use PyTorch 2.0 to compile the model to be faster
 
-@hydra.main(version_base=None, config_path="config", config_name="train_shakespeare_char.yaml")
-def main(cfg):
+#@hydra.main(version_base=None, config_path="config", config_name="train_shakespeare_char_macbook.yaml")
+@hydra.main(version_base=None, config_path="config", config_name="train_octaviopaz_char_macbook.yaml")
 
+def main(cfg):
+    # -----------------------------------------------------------------------------
     # I/O
     out_dir = cfg.out_dir
     eval_interval = cfg.eval_interval
@@ -87,11 +89,19 @@ def main(cfg):
     eval_only = cfg.eval_only
     always_save_checkpoint = cfg.always_save_checkpoint
     init_from = cfg.init_from
+    input_filename_dataset = cfg.input_filename_dataset
+    input_filename_train = cfg.input_filename_train
+    input_filename_val = cfg.input_filename_val
+    input_filename_meta = cfg.input_filename_meta
+    input_filename_checkpoint = cfg.input_filename_checkpoint
 
     # wandb logging
     wandb_log = cfg.wandb_log
     wandb_project = cfg.wandb_project
     wandb_run_name = cfg.wandb_run_name
+    # if sweep
+    #if wandb_log:# and master_process:
+    #    wandb.init(project=wandb_project, name=wandb_run_name)
 
     # data
     dataset = cfg.dataset
@@ -100,9 +110,12 @@ def main(cfg):
     block_size = cfg.block_size
 
     # model
+    # if sweep
+    #cfg.n_layer = wandb.config.n_layer
+    #cfg.n_head  = wandb.config.n_head
     n_layer = cfg.n_layer
-    n_head = cfg.n_head
-    n_embd = cfg.n_embd
+    n_head  = cfg.n_head
+    n_embd  = cfg.n_embd
     dropout = cfg.dropout
     bias = cfg.bias
 
@@ -131,6 +144,7 @@ def main(cfg):
     #config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
     #exec(open('configurator.py').read()) # overrides from command line or config file
     config = OmegaConf.to_container(cfg) #{k: globals()[k] for k in config_keys} # will be useful for logging
+    
     # -----------------------------------------------------------------------------
     # various inits, derived attributes, I/O setup
     ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
@@ -155,6 +169,9 @@ def main(cfg):
     tokens_per_iter = gradient_accumulation_steps * ddp_world_size * batch_size * block_size
     print(f"tokens per iteration will be: {tokens_per_iter:,}")
 
+    if wandb_log and master_process:
+        wandb.init(project=wandb_project, name=wandb_run_name, config=config)
+
     if master_process:
         os.makedirs(out_dir, exist_ok=True)
     torch.manual_seed(1337 + seed_offset)
@@ -171,9 +188,9 @@ def main(cfg):
         # We recreate np.memmap every batch to avoid a memory leak, as per
         # https://stackoverflow.com/questions/45132940/numpy-memmap-memory-usage-want-to-iterate-once/61472122#61472122
         if split == 'train':
-            data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
+            data = np.memmap(os.path.join(data_dir, input_filename_train), dtype=np.uint16, mode='r')
         else:
-            data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
+            data = np.memmap(os.path.join(data_dir, input_filename_val), dtype=np.uint16, mode='r')
         ix = torch.randint(len(data) - block_size, (batch_size,))
         x = torch.stack([torch.from_numpy((data[i:i+block_size]).astype(np.int64)) for i in ix])
         y = torch.stack([torch.from_numpy((data[i+1:i+1+block_size]).astype(np.int64)) for i in ix])
@@ -189,7 +206,7 @@ def main(cfg):
     best_val_loss = 1e9
 
     # attempt to derive vocab_size from the dataset
-    meta_path = os.path.join(data_dir, 'meta.pkl')
+    meta_path = os.path.join(data_dir, input_filename_meta)
     meta_vocab_size = None
     if os.path.exists(meta_path):
         with open(meta_path, 'rb') as f:
@@ -212,7 +229,7 @@ def main(cfg):
     elif init_from == 'resume':
         print(f"Resuming training from {out_dir}")
         # resume training from a checkpoint.
-        ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+        ckpt_path = os.path.join(out_dir, input_filename_checkpoint)
         checkpoint = torch.load(ckpt_path, map_location=device)
         checkpoint_model_args = checkpoint['model_args']
         # force these config attributes to be equal otherwise we can't even resume training
@@ -247,7 +264,7 @@ def main(cfg):
     model.to(device)
 
     # initialize a GradScaler. If enabled=False scaler is a no-op
-    scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
+    scaler = torch.amp.GradScaler('cuda', enabled=(dtype == 'float16'))
 
     # optimizer
     optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
@@ -295,11 +312,6 @@ def main(cfg):
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 0..1
         return min_lr + coeff * (learning_rate - min_lr)
 
-    # logging
-    if wandb_log and master_process:
-        wandb.init(project=wandb_project, name=wandb_run_name, config=config)
-
-
     # training loop
     X, Y = get_batch('train') # fetch the very first batch
     t0 = time.time()
@@ -337,7 +349,7 @@ def main(cfg):
                         'config': config,
                     }
                     print(f"saving checkpoint to {out_dir}")
-                    torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+                    torch.save(checkpoint, os.path.join(out_dir, input_filename_checkpoint))
         if iter_num == 0 and eval_only:
             break
 
@@ -393,16 +405,17 @@ if __name__=="__main__":
 
     # # 2: Define the search space
     # sweep_config = {
-    #     "method": "random",
-    #     "metric": {"goal": "minimize", "name": "train/loss"},
+    #     "method": "grid",
+    #     "metric": {"goal": "minimize", 
+    #                "name": "train/loss"},
     #     "parameters": {
-    #         "sweep_n_layer": {'values': [2, 8, 16, 32]},
-    #         "sweep_n_head":  {'values': [2, 8, 16, 32]},
+    #         "n_layer": {'values': [12, 24, 36, 48]},
+    #         "n_head":  {'values': [8, 16, 32, 64]},
     #     },
     # }
 
     # # 3: Start the sweep
-    # sweep_id = wandb.sweep(sweep=sweep_config, project=wandb_project)
-    # wandb.agent(sweep_id, function=main, count=10)
+    # sweep_id = wandb.sweep(sweep=sweep_config, project="shakespeare_char_sweep")
+    # wandb.agent(sweep_id, function=main)
 
     main()
