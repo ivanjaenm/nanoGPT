@@ -23,24 +23,6 @@ compile = False # use PyTorch 2.0 to compile the model to be faster
 exec(open('configurator.py').read()) # overrides from command line or config file
 # -----------------------------------------------------------------------------
 
-# Function to calculate perplexity
-def compute_eval_perplexity(model, encode, text):
-    # Tokenize input text
-    inputs = encode(text)
-    
-    # Ensure the model is in evaluation mode
-    model.eval()
-    
-    # Disable gradient calculations for evaluation
-    with torch.no_grad():
-        # Forward pass: get the model's predictions (logits)
-        outputs = model(inputs, labels=inputs)
-        loss = outputs.loss.item()
-    
-    # Calculate perplexity from loss
-    perplexity = torch.exp(loss)
-    return perplexity
-
 torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)
 torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
@@ -52,7 +34,9 @@ ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=
 # model
 if init_from == 'resume':
     # init from a model saved in a specific directory
+    print(f"Resuming from {out_dir}...")
     ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+    print(f"Loading checkpoint from {ckpt_path}")
     checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
     gptconf = GPTConfig(**checkpoint['model_args'])
     model = GPT(gptconf)
@@ -75,6 +59,7 @@ if compile:
 load_meta = False
 if init_from == 'resume' and 'config' in checkpoint and 'dataset' in checkpoint['config']: # older checkpoints might not have these...
     meta_path = os.path.join('data', checkpoint['config']['dataset'], 'meta.pkl')
+    print(f"Looking for meta at {meta_path}")
     load_meta = os.path.exists(meta_path)
 if load_meta:
     print(f"Loading meta from {meta_path}...")
@@ -105,7 +90,5 @@ with torch.no_grad():
         for k in range(num_samples):
             y = model.generate(x, max_new_tokens, temperature=temperature, top_k=top_k)
             sample = decode(y[0].tolist())
-            perplexity = compute_eval_perplexity(model, encode, sample)
             print(sample)
-            print("Perplexity: ", perplexity.item())
             print('---------------')

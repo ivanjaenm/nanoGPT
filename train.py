@@ -77,7 +77,8 @@ from model import GPTConfig, GPT
 # compile = True # use PyTorch 2.0 to compile the model to be faster
 
 #@hydra.main(version_base=None, config_path="config", config_name="train_shakespeare_char_macbook.yaml")
-@hydra.main(version_base=None, config_path="config", config_name="train_octaviopaz_char_macbook.yaml")
+#@hydra.main(version_base=None, config_path="config", config_name="train_octaviopaz_char_macbook.yaml")
+@hydra.main(version_base=None, config_path="config", config_name="finetune_shakespeare_char_macbook.yaml")
 
 def main(cfg):
     # -----------------------------------------------------------------------------
@@ -230,7 +231,7 @@ def main(cfg):
         print(f"Resuming training from {out_dir}")
         # resume training from a checkpoint.
         ckpt_path = os.path.join(out_dir, input_filename_checkpoint)
-        checkpoint = torch.load(ckpt_path, map_location=device)
+        checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
         checkpoint_model_args = checkpoint['model_args']
         # force these config attributes to be equal otherwise we can't even resume training
         # the rest of the attributes (e.g. dropout) can stay as desired from command line

@@ -1,0 +1,81 @@
+# defaults:
+#   - model: 'shakespeare_char'
+#   - data: 'shakespeare_char'
+#   - train: 'shakespeare_char'
+#   - optimizer: 'shakespeare_char'
+#   - scheduler: 'shakespeare_char'
+
+#python train.py config/train_shakespeare_char.py --device=cpu --compile=False --eval_iters=20 --log_interval=1 --block_size=64 --batch_size=12 --n_layer=4 --n_head=4 --n_embd=128 --max_iters=2000 --lr_decay_iters=2000 --dropout=0.0
+
+# I/O
+# resuming training from this model:
+out_dir: 'out-shakespeare-char'
+input_filename_checkpoint: 'ckpt.pt'
+eval_interval: 5
+log_interval: 1
+eval_iters: 40
+eval_only: False
+always_save_checkpoint: False
+init_from: 'resume'
+
+# wandb logging
+wandb_log: True
+wandb_project: 'shakespeare_char-finetune'
+wandb_run_name: 'mini-gpt-finetune-shakespeare-char'
+
+# data
+dataset: 'octaviopaz_char'
+gradient_accumulation_steps: 32
+batch_size: 1
+block_size: 64
+# dataset for fine-tunning
+input_filename_dataset: 'input_full.txt'
+input_filename_train: 'train_full.bin'
+input_filename_val: 'val_full.bin'
+input_filename_meta: 'meta_full.pkl'
+
+# model
+n_layer: 24
+n_head: 8
+n_embd: 128
+dropout: 0.0
+bias: False
+
+# Optimizer
+optimizer:
+# adamw optimizer
+  learning_rate: 3e-5 # max learning rate
+  max_iters: 3500 # total number of training iterations
+  weight_decay: 1e-1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0 # clip gradients at this value, or disable if == 0.0
+# learning rate decay settings
+  decay_lr: False # whether to decay the learning rate
+  warmup_iters: 100 # how many steps to warm up for
+  lr_decay_iters: 3500 # should be ~= max_iters per Chinchilla
+  min_lr: 6e-5 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
+
+# DDP setttings
+backend: 'nccl' # 'nccl', 'gloo', etc.
+
+# system
+device: 'mps'
+dtype: 'bfloat16' # if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
+compile: False # use PyTorch 2.0 to compile the model to be faster
+
+# Hydra config
+hydra:
+  run:
+    dir: ./outputs/exp_${hydra.job.override_dirname}
+  job:
+    config:
+      # configuration for the ${hydra.job.override_dirname} runtime variable
+      override_dirname:
+        kv_sep: '='
+        item_sep: ','
+        # Remove all paths, as the / in them would mess up things
+        # Remove params that would not impact the training itself
+        # Remove all slurm and submit params.
+        # This is ugly I know...
+        exclude_keys: [restart, data.root]
